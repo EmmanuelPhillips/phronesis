@@ -6,6 +6,7 @@ from pathlib import Path
 
 from phronesis.database import DATABASE_PATH, get_connection
 from phronesis.models import Learner, Skill, Task, Attempt
+from phronesis.models import Attempt, Learner, Mastery, Skill, Task
 
 
 def create_learner(
@@ -185,3 +186,102 @@ def get_learner_attempts(
         )
         for row in rows
     ]
+
+
+def get_mastery(
+    learner_id: str,
+    skill_id: str,
+    db_path: Path = DATABASE_PATH,
+) -> Mastery | None:
+    """Retrieve a learner's mastery of a particular skill."""
+
+    with closing(get_connection(db_path)) as connection:
+        row = connection.execute(
+            """
+            SELECT learner_id, skill_id, probability_known
+            FROM mastery
+            WHERE learner_id = ? AND skill_id = ?
+            """,
+            (learner_id, skill_id),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return Mastery(
+        learner_id=row["learner_id"],
+        skill_id=row["skill_id"],
+        probability_known=row["probability_known"],
+    )
+
+
+def create_mastery(
+    learner_id: str,
+    skill_id: str,
+    probability_known: float,
+    db_path: Path = DATABASE_PATH,
+) -> Mastery:
+    """Create an initial mastery record for a learner and skill."""
+
+    if not 0.0 <= probability_known <= 1.0:
+        raise ValueError("Mastery must be between 0.0 and 1.0")
+
+    mastery = Mastery(
+        learner_id=learner_id,
+        skill_id=skill_id,
+        probability_known=probability_known,
+    )
+
+    with closing(get_connection(db_path)) as connection:
+        connection.execute(
+            """
+            INSERT INTO mastery (
+                learner_id,
+                skill_id,
+                probability_known
+            )
+            VALUES (?, ?, ?)
+            """,
+            (
+                mastery.learner_id,
+                mastery.skill_id,
+                mastery.probability_known,
+            ),
+        )
+        connection.commit()
+
+    return mastery
+
+
+def update_mastery_record(
+    learner_id: str,
+    skill_id: str,
+    probability_known: float,
+    db_path: Path = DATABASE_PATH,
+) -> Mastery:
+    """Update an existing mastery record."""
+
+    if not 0.0 <= probability_known <= 1.0:
+        raise ValueError("Mastery must be between 0.0 and 1.0")
+
+    with closing(get_connection(db_path)) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE mastery
+            SET probability_known = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE learner_id = ? AND skill_id = ?
+            """,
+            (probability_known, learner_id, skill_id),
+        )
+
+        if cursor.rowcount == 0:
+            raise ValueError("Mastery record does not exist")
+
+        connection.commit()
+
+    return Mastery(
+        learner_id=learner_id,
+        skill_id=skill_id,
+        probability_known=probability_known,
+    )
