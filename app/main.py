@@ -7,30 +7,22 @@ from phronesis.models import Attempt
 from phronesis.repository import (
     create_learner,
     get_learner,
-    get_all_tasks,
     record_attempt,
-    get_learner_attempts,
 )
 from phronesis.seed import seed_database
+from phronesis.learner_service import update_learner_mastery
+from phronesis.task_selector import select_next_task
 
 
 # --------------------------------------------------
-# Application configuration
+# Application setup
 # --------------------------------------------------
 
 st.set_page_config(
     page_title="Phronesis",
     page_icon="🧠",
-    layout="wide",
+    layout="centered",
 )
-
-st.title("Phronesis")
-st.caption("Adaptive programming practice for better code comprehension.")
-
-
-# --------------------------------------------------
-# Initialise application data
-# --------------------------------------------------
 
 seed_database()
 
@@ -40,74 +32,96 @@ learner = get_learner(LEARNER_ID)
 
 if learner is None:
     learner = create_learner(
-        name="Local Learner",
+        "Local learner",
         learner_id=LEARNER_ID,
     )
-
-
-# --------------------------------------------------
-# Load available exercises
-# --------------------------------------------------
-
-tasks = get_all_tasks()
-
-if not tasks:
-    st.error("No exercises are currently available.")
-    st.stop()
 
 
 # --------------------------------------------------
 # Session state
 # --------------------------------------------------
 
+if "current_task_id" not in st.session_state:
+    st.session_state.current_task_id = None
+
 if "start_time" not in st.session_state:
     st.session_state.start_time = time.time()
-
-if "hints_used" not in st.session_state:
-    st.session_state.hints_used = 0
 
 if "hint_index" not in st.session_state:
     st.session_state.hint_index = 0
 
-if "submitted_task_id" not in st.session_state:
-    st.session_state.submitted_task_id = None
+if "hints_used" not in st.session_state:
+    st.session_state.hints_used = 0
 
 if "last_result" not in st.session_state:
     st.session_state.last_result = None
 
 
 # --------------------------------------------------
-# Exercise selection
+# Header
 # --------------------------------------------------
 
-task_options = {
-    task.title: task
-    for task in tasks
-}
+st.title("Phronesis")
+st.caption("Adaptive programming practice")
 
-selected_title = st.selectbox(
-    "Choose an exercise",
-    options=list(task_options.keys()),
+st.write(
+    f"Welcome, {learner.name}. "
+    "Your exercises adapt to your progress."
 )
 
-task = task_options[selected_title]
+st.divider()
 
 
-# Reset exercise-specific state when changing tasks
-if st.session_state.get("current_task_id") != task.id:
+# --------------------------------------------------
+# Previous attempt feedback
+# --------------------------------------------------
+
+if st.session_state.last_result is not None:
+    result = st.session_state.last_result
+
+    if result["correct"]:
+        st.success(
+            f"Correct! You completed {result['task_title']}."
+        )
+    else:
+        st.error(
+            f"Not quite. The expected answer was: "
+            f"{result['expected_answer']}"
+        )
+
+    st.subheader("Updated skill mastery")
+
+    for skill_id, probability in result["mastery"].items():
+        st.write(f"**{skill_id}:** {probability:.1%}")
+
+    st.divider()
+
+
+# --------------------------------------------------
+# Adaptive task selection
+# --------------------------------------------------
+
+task = select_next_task(LEARNER_ID)
+
+if task is None:
+    st.warning("There are currently no available tasks.")
+    st.stop()
+
+
+# --------------------------------------------------
+# Reset task-specific state when task changes
+# --------------------------------------------------
+
+if st.session_state.current_task_id != task.id:
     st.session_state.current_task_id = task.id
     st.session_state.start_time = time.time()
-    st.session_state.hints_used = 0
     st.session_state.hint_index = 0
-    st.session_state.submitted_task_id = None
-    st.session_state.last_result = None
+    st.session_state.hints_used = 0
 
 
 # --------------------------------------------------
-# Display exercise
+# Task display
 # --------------------------------------------------
-
-st.divider()
 
 st.subheader(task.title)
 
@@ -117,31 +131,29 @@ st.caption(
     f"Difficulty: {task.difficulty}/5"
 )
 
-st.code(
-    task.code,
-    language="python",
-)
+st.code(task.code, language="python")
 
-st.write("**Your answer:**")
 
 # --------------------------------------------------
 # Hints
 # --------------------------------------------------
 
-if task.hints and st.session_state.hint_index < len(task.hints):
+if task.hints:
+    st.subheader("Hints")
 
-    if st.button("Show hint"):
-        hint = task.hints[st.session_state.hint_index]
+    # Display previously revealed hints.
+    for index, hint in enumerate(
+        task.hints[:st.session_state.hint_index],
+        start=1,
+    ):
+        st.info(f"Hint {index}: {hint}")
 
-        st.session_state.hint_index += 1
-        st.session_state.hints_used += 1
-
-        st.info(hint)
-
-        st.rerun()
-
-elif task.hints:
-    st.caption("You've used all available hints.")
+    # Reveal the next hint.
+    if st.session_state.hint_index < len(task.hints):
+        if st.button("Show hint"):
+            st.session_state.hint_index += 1
+            st.session_state.hints_used += 1
+            st.rerun()
 
 
 # --------------------------------------------------
@@ -149,96 +161,58 @@ elif task.hints:
 # --------------------------------------------------
 
 with st.form("answer_form"):
-
     submitted_answer = st.text_input(
-        "Enter the expected output"
+        "Your answer",
+        placeholder="Enter your answer here...",
     )
 
-    submitted = st.form_submit_button(
-        "Submit answer"
-    )
+    submitted = st.form_submit_button("Submit answer")
 
+    if submitted:
+        if not submitted_answer.strip():
+            st.warning("Please enter an answer.")
+        else:
+            is_correct = (
+                submitted_answer.strip().lower()
+                == task.expected_answer.strip().lower()
+            )
 
-if submitted:
+            duration = time.time() - st.session_state.start_time
 
-    if not submitted_answer.strip():
-        st.warning("Please enter an answer.")
+            attempt = Attempt(
+                id=str(uuid4()),
+                learner_id=LEARNER_ID,
+                task_id=task.id,
+                submitted_answer=submitted_answer,
+                is_correct=is_correct,
+                hints_used=st.session_state.hints_used,
+                duration_seconds=duration,
+            )
 
-    elif st.session_state.submitted_task_id == task.id:
-        st.warning("You've already submitted this exercise.")
+            # Record the completed attempt.
+            record_attempt(attempt)
 
-    else:
-        expected = task.expected_answer.strip().lower()
-        actual = submitted_answer.strip().lower()
+            # Update mastery for the skills associated
+            # with the completed task.
+            updated_mastery = update_learner_mastery(
+                attempt,
+                task.skill_ids,
+            )
 
-        is_correct = actual == expected
+            # Save feedback for the next Streamlit rerun.
+            st.session_state.last_result = {
+                "correct": is_correct,
+                "task_title": task.title,
+                "expected_answer": task.expected_answer,
+                "mastery": {
+                    record.skill_id: record.probability_known
+                    for record in updated_mastery
+                },
+            }
 
-        duration = time.time() - st.session_state.start_time
+            # Reset exercise-specific state.
+            st.session_state.hint_index = 0
+            st.session_state.hints_used = 0
+            st.session_state.start_time = time.time()
 
-        attempt = Attempt(
-            id=str(uuid4()),
-            learner_id=learner.id,
-            task_id=task.id,
-            submitted_answer=submitted_answer,
-            is_correct=is_correct,
-            hints_used=st.session_state.hints_used,
-            duration_seconds=duration,
-        )
-
-        record_attempt(attempt)
-
-        st.session_state.submitted_task_id = task.id
-        st.session_state.last_result = is_correct
-
-
-# --------------------------------------------------
-# Feedback
-# --------------------------------------------------
-
-if st.session_state.submitted_task_id == task.id:
-
-    if st.session_state.last_result:
-        st.success("Correct! Well done.")
-    else:
-        st.error("Not quite. Here's the expected answer:")
-        st.code(task.expected_answer)
-
-    st.write(
-        f"Hints used: {st.session_state.hints_used}"
-    )
-
-    st.write(
-        f"Time taken: "
-        f"{time.time() - st.session_state.start_time:.1f} seconds"
-    )
-
-
-# --------------------------------------------------
-# Learner progress
-# --------------------------------------------------
-
-st.divider()
-
-st.subheader("Your progress")
-
-attempts = get_learner_attempts(learner.id)
-
-total_attempts = len(attempts)
-
-correct_attempts = sum(
-    attempt.is_correct for attempt in attempts
-)
-
-accuracy = (
-    correct_attempts / total_attempts * 100
-    if total_attempts > 0
-    else 0
-)
-
-col1, col2, col3 = st.columns(3)
-
-col1.metric("Exercises completed", total_attempts)
-
-col2.metric("Correct answers", correct_attempts)
-
-col3.metric("Accuracy", f"{accuracy:.1f}%")
+            st.rerun()
