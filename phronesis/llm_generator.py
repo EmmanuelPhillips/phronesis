@@ -1,6 +1,7 @@
 import ollama
 
 from phronesis.task_generation import parse_generated_tasks
+from phronesis.task_verification import verify_task
 
 
 TASK_SCHEMA = {
@@ -64,6 +65,7 @@ class OllamaTaskGenerator:
         difficulty: int,
         count: int = 5,
         existing_task_ids: set[str] | None = None,
+        max_attempts: int = 3,
     ):
         if not topic.strip():
             raise ValueError("Topic cannot be empty.")
@@ -79,6 +81,9 @@ class OllamaTaskGenerator:
 
         if not 1 <= count <= 10:
             raise ValueError("Count must be between 1 and 10.")
+
+        if not 1 <= max_attempts <= 5:
+            raise ValueError("Maximum attempts must be between 1 and 5.")
 
         instructions = """
         You are an educational programming question generator.
@@ -96,48 +101,85 @@ class OllamaTaskGenerator:
         - Keep questions unambiguous and suitable for beginners.
         """
 
-        request = f"""
-        Generate exactly {count} Python code-tracing questions.
+        verified_tasks = []
+        rejection_feedback = []
 
-        Topic: {topic}
+        for attempt in range(max_attempts):
+            remaining = count - len(verified_tasks)
 
-        Available skill IDs: {skill_ids}
+            if remaining == 0:
+                break
 
-        Required difficulty: {difficulty}
+            request = f"""
+            Generate exactly {remaining} Python code-tracing questions.
 
-        Only generate predict_output tasks.
-        """
+            Topic: {topic}
 
-        response = self.client.chat(
-            model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": instructions,
-                },
-                {
-                    "role": "user",
-                    "content": request,
-                },
-            ],
-            format=TASK_SCHEMA,
-            options={"temperature": 0},
-        )
+            Available skill IDs: {skill_ids}
 
-        response_text = response.message.content
+            Required difficulty: {difficulty}
 
-        if not response_text:
-            raise ValueError("The LLM returned an empty response.")
+            Only generate predict_output tasks.
 
-        tasks = parse_generated_tasks(
-            response_text,
-            valid_skill_ids,
-            existing_task_ids,
-        )
+            Do not repeat questions from previous attempts.
 
-        if len(tasks) != count:
-            raise ValueError(
-                f"Expected {count} tasks but received {len(tasks)}."
+            Previous verification feedback:
+            {rejection_feedback}
+            """
+
+            response = self.client.chat(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": instructions,
+                    },
+                    {
+                        "role": "user",
+                        "content": request,
+                    },
+                ],
+                format=TASK_SCHEMA,
+                options={"temperature": 0},
             )
 
-        return tasks
+
+            response_text = response.message.content
+
+            if not response_text:
+                raise ValueError("The LLM returned an empty response.")
+
+            generated_tasks = parse_generated_tasks(
+                response_text,
+                valid_skill_ids,
+                existing_task_ids,
+            )
+
+            if len(generated_tasks) != remaining:
+                raise ValueError(
+                    f"Expected {remaining} tasks but received "
+                    f"{len(generated_tasks)}."
+                )
+
+            for task in generated_tasks:
+                result = verify_task(task)
+
+                if result.is_valid:
+                    verified_tasks.append(task)
+                else:
+                    rejection_feedback.append(
+                        f"Rejected '{task.title}': {result.error}"
+                    )
+
+                if len(verified_tasks) == count:
+                    break
+
+        if len(verified_tasks) != count:
+            raise RuntimeError(
+                f"Could only generate {len(verified_tasks)} "
+                f"verified tasks out of {count} after "
+                f"{max_attempts} attempts. "
+                f"Feedback: {rejection_feedback}"
+            )
+
+        return verified_tasks

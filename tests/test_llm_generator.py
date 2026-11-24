@@ -1,6 +1,6 @@
 import json
 from types import SimpleNamespace
-
+from phronesis.task_verification import verify_task
 import pytest
 
 from phronesis.llm_generator import (
@@ -29,19 +29,25 @@ def make_response(count=1):
 
     return json.dumps({"tasks": tasks})
 
-
 class FakeClient:
     def __init__(self, output_text):
-        self.output_text = output_text
+        if isinstance(output_text, str):
+            output_text = [output_text]
+
+        self.output_texts = list(output_text)
         self.calls = []
 
     def chat(self, **kwargs):
         self.calls.append(kwargs)
 
+        output = (
+            self.output_texts.pop(0)
+            if len(self.output_texts) > 1
+            else self.output_texts[0]
+        )
+
         return SimpleNamespace(
-            message=SimpleNamespace(
-                content=self.output_text
-            )
+            message=SimpleNamespace(content=output)
         )
 
 
@@ -173,3 +179,74 @@ def test_wrong_number_of_tasks_is_rejected():
             difficulty=1,
             count=2,
         )
+
+
+def test_only_verified_tasks_are_returned():
+    client = FakeClient(make_response())
+
+    generator = OllamaTaskGenerator(client=client)
+
+    tasks = generator.generate_tasks(
+        topic="Python arithmetic",
+        skill_ids=["code-tracing"],
+        valid_skill_ids=VALID_SKILLS,
+        difficulty=1,
+        count=1,
+    )
+
+    assert len(tasks) == 1
+
+    result = verify_task(tasks[0])
+    assert result.is_valid is True
+
+
+def test_invalid_task_is_replaced():
+    invalid_response = make_response().replace(
+        '"expected_answer": "4"',
+        '"expected_answer": "5"',
+    )
+
+    valid_response = make_response()
+
+    client = FakeClient([
+        invalid_response,
+        valid_response,
+    ])
+
+    generator = OllamaTaskGenerator(client=client)
+
+    tasks = generator.generate_tasks(
+        topic="Python arithmetic",
+        skill_ids=["code-tracing"],
+        valid_skill_ids=VALID_SKILLS,
+        difficulty=1,
+        count=1,
+        max_attempts=3,
+    )
+
+    assert len(tasks) == 1
+    assert len(client.calls) == 2
+    assert tasks[0].expected_answer == "4"
+
+
+def test_generation_fails_when_no_tasks_can_be_verified():
+    invalid_response = make_response().replace(
+        '"expected_answer": "4"',
+        '"expected_answer": "5"',
+    )
+
+    client = FakeClient(invalid_response)
+
+    generator = OllamaTaskGenerator(client=client)
+
+    with pytest.raises(RuntimeError, match="verified tasks"):
+        generator.generate_tasks(
+            topic="Python arithmetic",
+            skill_ids=["code-tracing"],
+            valid_skill_ids=VALID_SKILLS,
+            difficulty=1,
+            count=1,
+            max_attempts=2,
+        )
+
+    assert len(client.calls) == 2
