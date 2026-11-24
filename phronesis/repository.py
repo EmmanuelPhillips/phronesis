@@ -8,9 +8,14 @@ from phronesis.database import DATABASE_PATH, get_connection
 from phronesis.models import Learner, Skill, Task, Attempt
 
 
-def create_learner(name: str, db_path: Path = DATABASE_PATH) -> Learner:
+def create_learner(
+    name: str,
+    db_path: Path = DATABASE_PATH,
+    learner_id: str | None = None,
+) -> Learner:
+
     learner = Learner(
-            id=str(uuid4()),
+        id=learner_id or str(uuid4()),
         name=name,
     )
 
@@ -22,7 +27,6 @@ def create_learner(name: str, db_path: Path = DATABASE_PATH) -> Learner:
         connection.commit()
 
     return learner
-
 
 def get_learner(
     learner_id: str,
