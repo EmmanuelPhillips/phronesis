@@ -58,6 +58,101 @@ TASKS = [
         skill_ids=["code-tracing", "loops"],
         hints=["What values does range(3) produce?", "Add those values together."],
     ),
+    Task(
+        id="task-004",
+        title="Variable reassignment",
+        description="What does this code print?",
+        code="x = 4\ny = x * 2\nx = y + 3\nprint(x)",
+        task_type="predict_output",
+        difficulty=2,
+        expected_answer="11",
+        skill_ids=["code-tracing"],
+        hints=[
+            "Track the values of x and y separately.",
+            "What is y after the multiplication?",
+        ],
+    ),
+    Task(
+        id="task-005",
+        title="Combining conditions",
+        description="What does this code print?",
+        code=(
+            "age = 20\n"
+            "has_ticket = True\n"
+            "if age >= 18 and has_ticket:\n"
+            "    print('Allowed')\n"
+            "else:\n"
+            "    print('Denied')"
+        ),
+        task_type="predict_output",
+        difficulty=2,
+        expected_answer="Allowed",
+        skill_ids=["code-tracing", "conditionals"],
+        hints=[
+            "The and operator requires both conditions to be true.",
+            "Check the age and has_ticket values.",
+        ],
+    ),
+    Task(
+        id="task-006",
+        title="Nested conditionals",
+        description="What does this code print?",
+        code=(
+            "x = 8\n"
+            "if x > 5:\n"
+            "    if x < 10:\n"
+            "        print('A')\n"
+            "    else:\n"
+            "        print('B')\n"
+            "else:\n"
+            "    print('C')"
+        ),
+        task_type="predict_output",
+        difficulty=3,
+        expected_answer="A",
+        skill_ids=["code-tracing", "conditionals"],
+        hints=[
+            "Start with the outer condition.",
+            "Both conditions must be satisfied to print A.",
+        ],
+    ),
+    Task(
+        id="task-007",
+        title="Accumulating values",
+        description="What does this code print?",
+        code=(
+            "total = 0\n"
+            "for i in range(1, 4):\n"
+            "    total += i\n"
+            "print(total)"
+        ),
+        task_type="predict_output",
+        difficulty=2,
+        expected_answer="6",
+        skill_ids=["code-tracing", "loops"],
+        hints=[
+            "range(1, 4) starts at 1 and stops before 4.",
+            "Track total after every iteration.",
+        ],
+    ),
+    Task(
+        id="task-008",
+        title="Nested loops",
+        description="What does this code print?",
+        code=(
+            "for i in range(2):\n"
+            "    for j in range(2):\n"
+            "        print(i + j)"
+        ),
+        task_type="predict_output",
+        difficulty=3,
+        expected_answer="0\n1\n1\n2",
+        skill_ids=["code-tracing", "loops"],
+        hints=[
+            "The inner loop completes twice for each outer iteration.",
+            "Calculate i + j for each pair of values.",
+        ],
+    ),
 ]
 
 
