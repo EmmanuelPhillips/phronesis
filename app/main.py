@@ -12,6 +12,7 @@ from phronesis.repository import (
 from phronesis.seed import seed_database
 from phronesis.learner_service import update_learner_mastery
 from phronesis.task_selector import select_next_task
+from phronesis.evaluation import evaluate_task
 
 
 # --------------------------------------------------
@@ -75,18 +76,15 @@ st.divider()
 # --------------------------------------------------
 # Previous attempt feedback
 # --------------------------------------------------
-
 if st.session_state.last_result is not None:
     result = st.session_state.last_result
 
     if result["correct"]:
-        st.success(
-            f"Correct! You completed {result['task_title']}."
-        )
+        st.success(result["feedback"])
     else:
-        st.error(
-            f"Not quite. The expected answer was: "
-            f"{result['expected_answer']}"
+        st.error(result["feedback"])
+        st.write(
+            f"Expected answer: {result['expected_answer']}"
         )
 
     st.subheader("Updated skill mastery")
@@ -161,10 +159,10 @@ if task.hints:
 # --------------------------------------------------
 
 with st.form("answer_form"):
-    submitted_answer = st.text_input(
-        "Your answer",
-        placeholder="Enter your answer here...",
-    )
+    submitted_answer = st.text_area(
+    "Your answer",
+    key=f"answer_{task.id}"
+)
 
     submitted = st.form_submit_button("Submit answer")
 
@@ -172,10 +170,12 @@ with st.form("answer_form"):
         if not submitted_answer.strip():
             st.warning("Please enter an answer.")
         else:
-            is_correct = (
-                submitted_answer.strip().lower()
-                == task.expected_answer.strip().lower()
+            evaluation_result = evaluate_task(
+            task,
+            submitted_answer,
             )
+
+            is_correct = evaluation_result.is_correct
 
             duration = time.time() - st.session_state.start_time
 
@@ -202,8 +202,9 @@ with st.form("answer_form"):
             # Save feedback for the next Streamlit rerun.
             st.session_state.last_result = {
                 "correct": is_correct,
+                "feedback": evaluation_result.feedback,
                 "task_title": task.title,
-                "expected_answer": task.expected_answer,
+                "expected_answer": evaluation_result.expected_answer,
                 "mastery": {
                     record.skill_id: record.probability_known
                     for record in updated_mastery
